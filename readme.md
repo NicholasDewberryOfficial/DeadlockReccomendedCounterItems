@@ -34,7 +34,7 @@ EX: Sinclair has two build archetypes. He can go for spirit poke items (expansio
 -Identifying counter-counter items
 EX: Knockdown is great against Seven. However, once he gets unstoppable - it's not as good. Knockdown should be recommended at first, then forgotten.
 
-A lot of this requires an algorithmic reasoning/suggestion system to look at the game state, and make recommendations. I *could* go that far, bu
+A lot of this requires an algorithmic reasoning/suggestion system to look at the game state, and make recommendations. I *could* go that far, but It's not worth it imo.
 
 Any more ideas? Feel free to open an issue. I thrive off feedback.
 
