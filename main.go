@@ -66,7 +66,7 @@ func main() {
 		}
 		currmatch, err := getActiveMatchForPlayer(playerID, sdd)
 		if err != nil {
-			fmt.Fprintf(w, "Player isn't in a match or their profile is not public.", nil)
+			fmt.Fprintf(w, "Player isn't in a match or their profile is not public.", err.Error())
 			return
 		}
 		if sdd {
@@ -149,14 +149,17 @@ func getActiveMatchForPlayer(playerID int, sdd bool) (ActiveMatch, error) {
 	// The API returns a list of matches, even if it's just one.
 	var currmatches []ActiveMatch
 	if err := json.Unmarshal(body, &currmatches); err != nil {
+		println("Cant unmarshal JSON")
 		return ActiveMatch{}, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
 
 	if len(currmatches) == 0 {
+		println("user not in a match")
 		return ActiveMatch{}, fmt.Errorf("user is not in a match")
 	}
 
 	if len(currmatches) > 1 {
+		println("User in multiple matches")
 		return ActiveMatch{}, fmt.Errorf("unexpected API response: user is in multiple matches")
 	}
 
