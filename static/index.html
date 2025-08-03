@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Deadlock Counters</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Teko:wght@300..700&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            .flex-container {
+                display: flex; /* This is the magic property */
+                justify-content: space-between; /* Optional: Distributes space between items */
+                align-items: center; /* Optional: Vertically aligns items if they have different heights */
+                gap: 1rem; /* Optional: Adds a 1rem gap between each image */
+            }
+            body {
+                font-family: "Teko", sans-serif;
+                background-color: #060e00;
+                color: #f4e5ce;
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 2rem;
+            }
+            .header-title {
+                font-size: 4rem;
+                font-weight: 700;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+            }
+            .subtitle {
+                font-size: 1.5rem;
+                font-weight: 300;
+                margin-top: 0.5rem;
+            }
+            .card {
+                background-color: #28281f;
+                border-radius: 0.5rem;
+                padding: 2rem;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            .card-header {
+                font-size: 2rem;
+                font-weight: 600;
+                margin-bottom: 1.5rem;
+            }
+            .input-field {
+                background-color: #f4e5ce;
+                color: #060e00;
+                border: 2px solid #345109;
+                border-radius: 0.25rem;
+                padding: 0.75rem 1rem;
+                width: 100%;
+                font-size: 1.25rem;
+            }
+            .submit-button {
+                background-color: #345109;
+                color: #f4e5ce;
+                padding: 0.75rem 2rem;
+                border-radius: 0.25rem;
+                text-transform: uppercase;
+                font-weight: 700;
+                letter-spacing: 0.05em;
+                cursor: pointer;
+                transition: background-color 0.3s ease;
+            }
+            .submit-button:hover {
+                background-color: #4a750c;
+            }
+            .footer {
+                margin-top: 4rem;
+                padding: 2rem;
+                text-align: center;
+                font-size: 1rem;
+                color: #f4e5ce;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header class="text-center my-12">
+                <h1 class="header-title">deadlockcounters.com</h1>
+                <p class="subtitle">
+                    What should I buy to counter my opponents in deadlock?
+                </p>
+            </header>
+
+            <section class="text-justify">
+                <p>
+                    This is a beta and proof of concept resource. Itemization in
+                    Deadlock is an incredibly complex and context-sensitive
+                    topic. <br />
+                    Do not treat this tool as the primary source of truth. Use
+                    your own intuition.
+                </p>
+            </section>
+            <main class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div class="card">
+                    <h2 class="card-header">Search by account ID</h2>
+                    <p>For games in progress.</p>
+                    <!-- The Form -->
+                    <form
+                        hx-post="/accountIDlookup"
+                        hx-target="#results-container"
+                        hx-swap="innerHTML"
+                        hx-indicator="#loading-spinner"
+                    >
+                        <div class="mb-4">
+                            <label for="searchbyaccountID" class="sr-only"
+                                >Account ID</label
+                            >
+                            <input
+                                type="text"
+                                class="input-field rounded w-full py-2 px-3 text-lg"
+                                name="accountID"
+                                placeholder="Enter Account ID"
+                            />
+                        </div>
+
+                        <button type="submit" class="submit-button">
+                            Submit
+                        </button>
+                    </form>
+
+                    <!-- A spinner that will show while the request is in flight -->
+                    <div id="loading-spinner" class="htmx-indicator">
+                        Loading...
+                    </div>
+                </div>
+                <div class="card">
+                    <h2 class="card-header">Search by match ID</h2>
+                    <p>For finished games.</p>
+                    <form>
+                        <div class="mb-4">
+                            <input
+                                type="text"
+                                class="input-field"
+                                placeholder="Enter Match ID"
+                            />
+                        </div>
+                        <button type="submit" class="submit-button">
+                            Submit
+                        </button>
+                    </form>
+                </div>
+            </main>
+
+            <!-- ★★★ HTMX Target Container ★★★ -->
+            <!-- The results from the backend will be injected here -->
+            <div id="results-container" class="mt-8">
+                <!-- This will be replaced -->
+            </div>
+
+            <footer class="footer">
+                <p>&copy; 2025 deadlockcounters.com - All rights reserved.</p>
+                <section class="flex-container">
+                    <img src="static/badgirl.gif" alt="Bad Girl GIF" />
+                    <img src="static/muwahahah.gif" alt="Evil Laugh GIF" />
+                    <img src="static/fallenangel.gif" alt="Fallen Angel GIF" />
+                    <img src="static/fwordbanner.gif" alt="F-word Banner GIF" />
+                </section>
+            </footer>
+        </div>
+    </body>
+</html>

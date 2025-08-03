@@ -4,85 +4,201 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
+	"text/template"
 )
 
-func main() {
-	//sdd = boolean for print statements for debugging.
-	// Stupidly named? Yes. I just wanted something easy to type.
-	sdd := false
-	activematchurl := "https://api.deadlock-api.com/v1/matches/active"
+// ItemCount is used to store an item's name and its recommendation frequency.
+type ItemCount struct {
+	Name  string
+	Count int
+}
 
-	fmt.Printf("Beginning item reccomender")
-	//1. get current player
-	// var playerID int := os.Getenv("userAccountName")
-	var playerID int = 1395432137
-	//2. see if player is in game
-	sendstring := (activematchurl + "?account_id=" + strconv.Itoa(playerID))
-	req, _ := http.NewRequest("GET", sendstring, nil)
-	res, _ := http.DefaultClient.Do(req)
+func main() {
+	// sdd = boolean for print statements for debugging.
+	const sdd bool = false
+	pages := template.Must(template.New("").ParseGlob("static/*.html"))
+	mux := http.NewServeMux()
+	mux.Handle("GET /static/",
+		http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+
+	//crawler detection
+	//RN I dont care... but in the future I may.
+	// uastring := "curl/7.54.0"
+	// if crawlerdetect.IsCrawler(uastring) {
+	// 	//http.Redirect(w, nil, "/lookatAtPosts", http.StatusTemporaryRedirect)
+	// 	// http.Redirect(w, nil, )
+	// 	// 1. create a markov babbler service
+	// 	// 2. send em there
+	// }
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		err := pages.ExecuteTemplate(w, "index.html", nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("POST /accountIDlookup", func(w http.ResponseWriter, r *http.Request) {
+		// Parse the form data from the incoming request.
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Error parsing form", http.StatusBadRequest)
+			return
+		}
+
+		// Get the value from the form data using the "name" attribute from your input.
+		numfromURL := r.FormValue("accountID")
+
+		if numfromURL == "" || numfromURL == " " {
+			fmt.Fprintf(w, "Dude you sent a blank string. Fail...", nil)
+			return
+		}
+		println("we got the account lookup. Now moving on.")
+
+		// Step 1 & 2: Get the player's current active match from the API.
+		playerID, err := strconv.Atoi(numfromURL) // Hardcoded for this example
+		if err != nil {
+			fmt.Fprintf(w, "Dude, you didn't send a working number. Epic fail...", nil)
+			return
+		}
+		currmatch, err := getActiveMatchForPlayer(playerID, sdd)
+		if err != nil {
+			fmt.Fprintf(w, "Player isn't in a match or their profile is not public.", nil)
+			return
+		}
+		if sdd {
+			fmt.Printf("Successfully found match for player %d\n", playerID)
+		}
+
+		// Step 3: Find out which team the player is on.
+		playerTeam, err := findPlayerTeam(currmatch, playerID)
+		if err != nil {
+			log.Fatalf("Could not find player in match data: %v", err)
+		}
+		fmt.Printf("Player is on team: %d\n", playerTeam)
+
+		// Step 4: Get a list of all hero IDs on the enemy team.
+		enemyHeroIDs := getEnemyHeroIDs(currmatch, playerTeam)
+		if sdd {
+			fmt.Printf("Found enemy hero IDs: %v\n", enemyHeroIDs)
+		}
+
+		// Step 5: Generate a list of counter-item recommendations based on enemy heroes.
+		recommendedItems := generateItemRecommendations(enemyHeroIDs)
+		if sdd {
+			fmt.Printf("Unsorted recommendations: %v\n", recommendedItems)
+		}
+
+		// Step 6: Count and sort the items by how frequently they were recommended.
+		sortedItems := countAndSortItems(recommendedItems)
+
+		// Final Step: Display the results.
+		fmt.Println("\n--- Top Recommended Items ---")
+		for _, item := range sortedItems {
+			fmt.Printf("Item: %-20s | Recommended: %d time(s)\n", item.Name, item.Count)
+		}
+
+		data := map[string]interface{}{
+			"Items": sortedItems,
+		}
+
+		if err := pages.ExecuteTemplate(w, "recitems.html", data); err != nil {
+			http.Error(w, "Failed to render recommendations", http.StatusInternalServerError)
+			log.Println(err)
+		}
+
+	})
+
+	log.Println("listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", mux))
+}
+
+// --- Helper Functions ---
+
+// getActiveMatchForPlayer fetches the active match for a given player ID.
+func getActiveMatchForPlayer(playerID int, sdd bool) (ActiveMatch, error) {
+	activeMatchURL := "https://api.deadlock-api.com/v1/matches/active"
+	sendstring := (activeMatchURL + "?account_id=" + strconv.Itoa(playerID))
+	req, err := http.NewRequest("GET", sendstring, nil)
+	if err != nil {
+		return ActiveMatch{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ActiveMatch{}, fmt.Errorf("failed to perform request: %w", err)
+	}
 	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
+
+	if res.StatusCode != http.StatusOK {
+		return ActiveMatch{}, fmt.Errorf("API returned non-200 status: %s", res.Status)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ActiveMatch{}, fmt.Errorf("failed to read response body: %w", err)
+	}
 
 	if sdd {
-		// fmt.Println(res)
-		fmt.Println(string(body))
+		fmt.Printf("API Response Body: %s\n", string(body))
 	}
-	//2.1 parse into structs
-	// Even though users can only be in one match at once
-	// we use a slice of multiple matches
-	// this is so the JSON can unfurl correctly
+
+	// The API returns a list of matches, even if it's just one.
 	var currmatches []ActiveMatch
-	err := json.Unmarshal(body, &currmatches)
-	if err != nil {
-		panic(err)
+	if err := json.Unmarshal(body, &currmatches); err != nil {
+		return ActiveMatch{}, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
 
-	if len(currmatches) != 1 {
-		// Handle the unexpected cases gracefully.
-		fmt.Printf("User is not in a match.")
-		return
+	if len(currmatches) == 0 {
+		return ActiveMatch{}, fmt.Errorf("user is not in a match")
 	}
 
-	var currmatch = currmatches[0]
+	if len(currmatches) > 1 {
+		return ActiveMatch{}, fmt.Errorf("unexpected API response: user is in multiple matches")
+	}
 
-	//3. see what team player is on
-	teambool := 0
-	for _, value := range currmatch.Players {
-		if int(value.AccountID) == playerID {
-			teambool = int(value.Team)
+	return currmatches[0], nil
+}
+
+// findPlayerTeam iterates through the match players to find the team of our target player.
+func findPlayerTeam(match ActiveMatch, playerID int) (int, error) {
+	for _, player := range match.Players {
+		if player.AccountID == playerID {
+			return player.Team, nil
 		}
 	}
+	return -1, fmt.Errorf("player with ID %d not found in the match", playerID)
+}
 
-	print("Player is on team: %d", teambool)
-
-	//4. see what heroes are on the enemy team
-	heroIDslice := make([]int, 6, 6)
-	slicePTR := 0
-	for _, value := range currmatch.Players {
-		if value.Team != teambool {
-			heroIDslice[slicePTR] = value.HeroID
-			slicePTR += 1
+// getEnemyHeroIDs collects the hero IDs of all players not on the player's team.
+func getEnemyHeroIDs(match ActiveMatch, playerTeam int) []int {
+	var heroIDslice []int
+	for _, player := range match.Players {
+		if player.Team != playerTeam {
+			heroIDslice = append(heroIDslice, player.HeroID)
 		}
 	}
+	return heroIDslice
+}
 
-	//5. Iterate through every enemy hero. For every counter item we have, we add into the item slice.
-	// IMPORTANT: Items cannot have spaces. Instead - use _ in between them.
-	itemsSlice := make([]string, 0)
+// generateItemRecommendations creates a list of suggested items based on enemy heroes.
+func generateItemRecommendations(enemyHeroIDs []int) []string {
+	// Item categories
 	antihealitems := []string{"healbane", "decay", "toxic_bullets", "spirit_burn", "inhibitor", "crippling_headshot"}
 	antimovementitems := []string{"slowing_hex", "knockdown", "artic_blast", "focus_lens"}
 	antifirerateitems := []string{"juggernaut", "disarming_hex", "supressor", "phantom_strike", "plated_armor", "metal_skin", "return_fire"}
-	// antimeleeitems := []string{"rebuttal"}
 	anticatchitems := []string{"rescue_beam", "divine_barrier"}
 	antiburstitems := []string{"ethereal_shift", "spellbreaker"}
 	anticarryitems := []string{"inhibitor"}
 	antitankitems := []string{"toxic_bullets", "tankbuster", "mythic_slow", "scourge"}
 	movementitems := []string{"warp_stone", "fleetfoot", "enduring_speed"}
-	// interruptitems := []string{"knockdown"}
-	// Having an editor with code folding capability is basically MANDATORY
-	for _, value := range heroIDslice {
+
+	var itemsSlice []string
+
+	for _, value := range enemyHeroIDs {
 		//5.1 case statement
 		switch value {
 
@@ -219,37 +335,25 @@ func main() {
 			// You might want to log this to know when your list needs an update.
 			fmt.Printf("Warning: Unhandled hero ID %d found.\n", value)
 		}
-
 	}
+	return itemsSlice
+}
 
-	//6. Now that we have the entire slice with items, let's sort it
-	// so items with the same name are next to each other
-	if sdd {
-		fmt.Printf("Unsorted slice: %v", (itemsSlice))
-		sort.Strings(itemsSlice)
-		fmt.Printf("Sorted slice: %v", (itemsSlice))
-	}
-
-	//6.1 with the sorted slice, let's create a map. name is the key, value is how many times it appears.
-	//
-	//make the slice
+// countAndSortItems takes a slice of item strings, counts occurrences, and sorts them.
+func countAndSortItems(itemsSlice []string) []ItemCount {
+	// Create a map to count how many times each item appears.
 	counts := make(map[string]int)
 	for _, item := range itemsSlice {
 		counts[item]++
 	}
 
-	//go maps are unorderd. So we map the slice into another slice (lol)
-	// this time, it's got a count.
-	type ItemCount struct {
-		Name  string
-		Count int
-	}
-
+	// Convert the map to a slice of ItemCount structs for sorting.
 	var sortedItems []ItemCount
 	for name, count := range counts {
 		sortedItems = append(sortedItems, ItemCount{Name: name, Count: count})
 	}
-	//sort
+
+	// Sort the slice. Primary sort is by Count (descending), secondary is by Name (ascending).
 	sort.Slice(sortedItems, func(i, j int) bool {
 		if sortedItems[i].Count != sortedItems[j].Count {
 			return sortedItems[i].Count > sortedItems[j].Count
@@ -257,8 +361,7 @@ func main() {
 		return sortedItems[i].Name < sortedItems[j].Name
 	})
 
-	fmt.Printf("\n sorted items: %v", sortedItems)
-
+	return sortedItems
 }
 
 // Types and objects.
