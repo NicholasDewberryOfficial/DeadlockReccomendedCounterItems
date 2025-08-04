@@ -19,7 +19,7 @@ type ItemCount struct {
 
 func main() {
 	// sdd = boolean for print statements for debugging.
-	const sdd bool = false
+	const sdd bool = true
 	pages := template.Must(template.New("").ParseGlob("static/*.html"))
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/",
@@ -74,14 +74,100 @@ func main() {
 		}
 
 		// Step 3: Find out which team the player is on.
-		playerTeam, err := findPlayerTeam(currmatch, playerID)
+		playerTeam, err := findPlayerTeamActiveMatch(currmatch, playerID)
 		if err != nil {
 			log.Fatalf("Could not find player in match data: %v", err)
 		}
 		fmt.Printf("Player is on team: %d\n", playerTeam)
 
 		// Step 4: Get a list of all hero IDs on the enemy team.
-		enemyHeroIDs := getEnemyHeroIDs(currmatch, playerTeam)
+		enemyHeroIDs := getEnemyHeroIDsActiveMatch(currmatch, playerTeam)
+		if sdd {
+			fmt.Printf("Found enemy hero IDs: %v\n", enemyHeroIDs)
+		}
+
+		// Step 5: Generate a list of counter-item recommendations based on enemy heroes.
+		recommendedItems := generateItemRecommendations(enemyHeroIDs)
+		if sdd {
+			fmt.Printf("Unsorted recommendations: %v\n", recommendedItems)
+		}
+
+		// Step 6: Count and sort the items by how frequently they were recommended.
+		sortedItems := countAndSortItems(recommendedItems)
+
+		// Final Step: Display the results.
+		fmt.Println("\n--- Top Recommended Items ---")
+		for _, item := range sortedItems {
+			fmt.Printf("Item: %-20s | Recommended: %d time(s)\n", item.Name, item.Count)
+		}
+
+		data := map[string]interface{}{
+			"Items": sortedItems,
+		}
+
+		if err := pages.ExecuteTemplate(w, "recitems.html", data); err != nil {
+			http.Error(w, "Failed to render recommendations", http.StatusInternalServerError)
+			log.Println(err)
+		}
+
+	})
+
+	//Todo: redo this
+	// We need to take the form of the matchID, as well as the team the player was on
+	// How can we do this?
+	// Ok. Simple way is to just get the account ID of the player, and the match ID
+	// that way we can reuse as much as possible.
+	mux.HandleFunc("POST /matchlookup", func(w http.ResponseWriter, r *http.Request) {
+		//oh shit... need to redo this.
+		// //probably need to have the form tell us the player ID, and the matchID.
+		// Or maybe just tell us the team? I think that'll work better.
+		// Parse the form data from the incoming request.
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Error parsing form", http.StatusBadRequest)
+			return
+		}
+
+		// Get the value from the form data using the "name" attribute from your input.
+		strAccountIDfromURL := r.FormValue("accountID")
+		strMatchIDfromURL := r.FormValue("matchID")
+
+		if strMatchIDfromURL == "" || strMatchIDfromURL == " " || strAccountIDfromURL == "" || strAccountIDfromURL == " " {
+			fmt.Fprintf(w, "Dude you sent a blank string. Fail...", nil)
+			return
+		}
+		println("we got the account lookup. Now moving on.")
+
+		// Step 1 & 2: Get the ive match from the API.
+		matchID, err := strconv.Atoi(strMatchIDfromURL)
+		if err != nil {
+			fmt.Fprintf(w, "Dude, you didn't send a working number for the match ID. Epic fail...", nil)
+			return
+		}
+
+		accountID, err := strconv.Atoi(strAccountIDfromURL)
+		if err != nil {
+			fmt.Fprintf(w, "Dude, you didn't send a working number for the account ID. Epic fail...", nil)
+			return
+		}
+
+		currmatch, err := getpastmatchfromMatchID(matchID, accountID, sdd)
+		if err != nil {
+			fmt.Fprintf(w, "accountID is invalid or the matchID is invalid or there's some other type of bugs .", err.Error())
+			return
+		}
+		if sdd {
+			fmt.Printf("Successfully found match for player %d\n", accountID)
+		}
+
+		// Step 3: Find out which team the player is on.
+		playerTeam, err := findPlayerTeamFinishedMatch(currmatch, accountID)
+		if err != nil {
+			log.Fatalf("Could not find player in match data: %v", err)
+		}
+		fmt.Printf("Player is on team: %d\n", playerTeam)
+
+		// Step 4: Get a list of all hero IDs on the enemy team.
+		enemyHeroIDs := getEnemyHeroIDsFinishedMatch(currmatch, playerTeam)
 		if sdd {
 			fmt.Printf("Found enemy hero IDs: %v\n", enemyHeroIDs)
 		}
@@ -166,8 +252,57 @@ func getActiveMatchForPlayer(playerID int, sdd bool) (ActiveMatch, error) {
 	return currmatches[0], nil
 }
 
+func getpastmatchfromMatchID(matchID int, accountID int, sdd bool) (finishedMatch, error) {
+	//https://api.deadlock-api.com/v1/matches/metadata?include_player_info=true&match_ids=38513597&account_ids=119270684
+	pastMatchURL := "https://api.deadlock-api.com/v1/matches/metadata?include_player_info=true"
+	sendstring := (pastMatchURL + "&match_ids=" + strconv.Itoa(matchID) + "&account_id=" + strconv.Itoa(accountID))
+	req, err := http.NewRequest("GET", sendstring, nil)
+	if err != nil {
+		return finishedMatch{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return finishedMatch{}, fmt.Errorf("failed to perform request: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return finishedMatch{}, fmt.Errorf("API returned non-200 status: %s", res.Status)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return finishedMatch{}, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if sdd {
+		fmt.Printf("API Response Body: %s\n", string(body))
+	}
+
+	// The API returns a list of matches, even if it's just one.
+	var foundmatch []finishedMatch
+	if err := json.Unmarshal(body, &foundmatch); err != nil {
+		println("Cant unmarshal JSON for found match")
+		return finishedMatch{}, fmt.Errorf("failed to unmarshal JSON: %w", err)
+
+	}
+
+	if len(foundmatch) == 0 {
+		println("user not in a match")
+		return finishedMatch{}, fmt.Errorf("match ID is invalid. You either have to wait for the API to update with the match, or the matchID doesn't exist.")
+	}
+
+	if len(foundmatch) > 1 {
+		println("User in multiple matches")
+		return finishedMatch{}, fmt.Errorf("unexpected API response: MatchID has multiple matches.")
+	}
+
+	return foundmatch[0], nil
+}
+
 // findPlayerTeam iterates through the match players to find the team of our target player.
-func findPlayerTeam(match ActiveMatch, playerID int) (int, error) {
+func findPlayerTeamActiveMatch(match ActiveMatch, playerID int) (int, error) {
 	for _, player := range match.Players {
 		if player.AccountID == playerID {
 			return player.Team, nil
@@ -176,10 +311,32 @@ func findPlayerTeam(match ActiveMatch, playerID int) (int, error) {
 	return -1, fmt.Errorf("player with ID %d not found in the match", playerID)
 }
 
+func findPlayerTeamFinishedMatch(match finishedMatch, accountID int) (string, error) {
+	for _, player := range match.Players {
+		if player.AccountID == accountID {
+			return player.Team, nil
+		}
+	}
+	return "err", fmt.Errorf("Player with ID %d not found in match", accountID)
+}
+
 // getEnemyHeroIDs collects the hero IDs of all players not on the player's team.
-func getEnemyHeroIDs(match ActiveMatch, playerTeam int) []int {
+func getEnemyHeroIDsActiveMatch(match ActiveMatch, playerTeam int) []int {
 	var heroIDslice []int
 	for _, player := range match.Players {
+		if player.Team != playerTeam {
+			heroIDslice = append(heroIDslice, player.HeroID)
+		}
+	}
+	return heroIDslice
+}
+
+// remember, for finished matches we get playerteam as a string, not an int
+// therefore we need to convert
+func getEnemyHeroIDsFinishedMatch(match finishedMatch, playerTeam string) []int {
+	var heroIDslice []int
+	for _, player := range match.Players {
+		//conditional bool should hold up even with different types.
 		if player.Team != playerTeam {
 			heroIDslice = append(heroIDslice, player.HeroID)
 		}
@@ -398,4 +555,39 @@ type ActiveMatch struct {
 	StartTime           *int                `json:"start_time"`
 	WinningTeam         *int                `json:"winning_team"`
 	WinningTeamParsed   *string             `json:"winning_team_parsed"` // Enum: "Team0", "Team1", "Spectator"
+}
+
+type finishedMatch struct {
+	AverageBadgeTeam0       int                   `json:"average_badge_team0"`
+	AverageBadgeTeam1       int                   `json:"average_badge_team1"`
+	DurationS               int                   `json:"duration_s"`
+	GameMode                string                `json:"game_mode"`
+	GameModeVersion         int                   `json:"game_mode_version"`
+	IsHighSkillRangeParties bool                  `json:"is_high_skill_range_parties"`
+	LowPriPool              bool                  `json:"low_pri_pool"`
+	MatchID                 int                   `json:"match_id"`
+	MatchMode               string                `json:"match_mode"`
+	MatchOutcome            string                `json:"match_outcome"`
+	NewPlayerPool           bool                  `json:"new_player_pool"`
+	Players                 []playerfinishedMatch `json:"players"`
+	StartTime               *string               `json:"start_time"`
+	WinningTeam             string                `json:"winning_team"`
+}
+
+type playerfinishedMatch struct {
+	AbandonMatchTimeS int    `json:"abandon_match_time_s"`
+	AbilityPoints     int    `json:"ability_points"`
+	AccountID         int    `json:"account_id"`
+	AssignedLane      int    `json:"assigned_lane"`
+	Assists           int    `json:"assists"`
+	Deaths            int    `json:"deaths"`
+	Denies            int    `json:"denies"`
+	HeroID            int    `json:"hero_id"`
+	Kills             int    `json:"kills"`
+	LastHits          int    `json:"last_hits"`
+	NetWorth          int    `json:"net_worth"`
+	Party             int    `json:"party"`
+	PlayerLevel       int    `json:"player_level"`
+	PlayerSlot        int    `json:"player_slot"`
+	Team              string `json:"team"`
 }
